@@ -27,25 +27,36 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val button = Button(this).apply {
+
+        val folderButton = Button(this).apply {
             text = "Pilih folder ROM"
             setOnClickListener { pickFolder.launch(null) }
         }
+        val settingsButton = Button(this).apply {
+            text = "Pengaturan"
+            setOnClickListener { Settings.showDialog(this@MainActivity) }
+        }
+
         adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf())
         val list = ListView(this).apply {
             this.adapter = this@MainActivity.adapter
             setOnItemClickListener { _, _, pos, _ ->
                 val rom = roms[pos]
-                startActivity(Intent(this@MainActivity, GameActivity::class.java)
-                    .putExtra("uri", rom.uri.toString())
-                    .putExtra("core", rom.system.coreLib))
+                startActivity(
+                    Intent(this@MainActivity, GameActivity::class.java)
+                        .putExtra("uri", rom.uri.toString())
+                        .putExtra("core", rom.system.coreLib)
+                )
             }
         }
+
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(button)
+            addView(folderButton)
+            addView(settingsButton)
             addView(list)
         })
+
         getSharedPreferences("lib", MODE_PRIVATE).getString("root", null)?.let { scan(Uri.parse(it)) }
     }
 
