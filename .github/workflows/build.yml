@@ -17,6 +17,15 @@ jobs:
         with:
           gradle-version: 8.9
 
+      - name: Ekstrak zip jika proyek masih berupa zip
+        run: |
+          if [ -z "$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)" ]; then
+            for z in $(find . -maxdepth 2 -name '*.zip' -not -path './.git/*'); do
+              echo "Ekstrak $z"
+              unzip -oq "$z" -d _proyek
+            done
+          fi
+
       - name: Cari folder proyek
         run: |
           F=$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)
