@@ -19,8 +19,22 @@ jobs:
         with:
           gradle-version: 8.9
 
+      - name: Cari folder proyek Gradle
+        # Proyek bisa ada di root repo atau di subfolder (mis. repo "BestPixelEmu" berisi folder proyek di dalamnya)
+        run: |
+          f="$(find . -maxdepth 4 -name settings.gradle.kts -not -path './.git/*' | head -n 1)"
+          if [ -z "$f" ]; then
+            echo "::error::settings.gradle.kts tidak ditemukan di repo. Upload isi proyek (app/, settings.gradle.kts, build.gradle.kts, gradle.properties)."
+            find . -maxdepth 2 -not -path './.git*' | head -50
+            exit 1
+          fi
+          dir="$(dirname "$f")"
+          echo "Folder proyek: $dir"
+          echo "PROJECT_DIR=$dir" >> "$GITHUB_ENV"
+
       - name: Unduh core libretro
         # Dibuat mandiri (tidak butuh scripts/fetch_cores.sh di repo)
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -euo pipefail
           BASE="https://buildbot.libretro.com/nightly/android/latest"
@@ -47,6 +61,7 @@ jobs:
           done
 
       - name: Pastikan core arcade (MAME 2010 + FBNeo) ada
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           ls -l app/src/main/jniLibs/*/
           for abi in arm64-v8a armeabi-v7a; do
@@ -57,10 +72,11 @@ jobs:
           done
 
       - name: Build APK debug
+        working-directory: ${{ env.PROJECT_DIR }}
         run: gradle assembleDebug --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: app/build/outputs/apk/debug/*.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           retention-days: 1
