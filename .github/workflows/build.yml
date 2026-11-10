@@ -1,4 +1,4 @@
-name: Build APK
+name: build
 
 on:
   push:
@@ -9,53 +9,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
 
-      - name: Ekstrak zip jika proyek masih berupa zip
-        run: |
-          if [ -z "$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)" ]; then
-            for z in $(find . -maxdepth 2 -name '*.zip' -not -path './.git/*'); do
-              echo "Ekstrak $z"
-              unzip -oq "$z" -d _proyek
-            done
-          fi
-
-      - name: Cari folder proyek
-        run: |
-          F=$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)
-          if [ -z "$F" ]; then
-            echo "settings.gradle.kts tidak ditemukan. Isi repo:"
-            ls -R | head -50
-            exit 1
-          fi
-          echo "PROJ=$(dirname "$F")" >> "$GITHUB_ENV"
-
       - name: Unduh core libretro
-        working-directory: ${{ env.PROJ }}
+        env:
+          # ABI yang disertakan di APK (hapus baris ini untuk semua ABI: armeabi-v7a arm64-v8a x86 x86_64)
+          ABIS: "arm64-v8a armeabi-v7a"
+          # Selalu unduh ulang core ini agar memakai build nightly terbaru
+          REFRESH: "fbneo mame2010"
+        run: bash scripts/fetch_cores.sh
+
+      - name: Pastikan core arcade (MAME 2010 + FBNeo) ada
         run: |
-          BASE="https://buildbot.libretro.com/nightly/android/latest"
-          TMP="$(mktemp -d)"
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p app/src/main/jniLibs/$abi
-            for core in mgba snes9x genesis_plus_gx fbneo mame2003_plus; do
-              curl -fsSL "$BASE/$abi/${core}_libretro_android.so.zip" -o "$TMP/$core.zip"
-              rm -rf "$TMP/x" && mkdir -p "$TMP/x"
-              unzip -oq "$TMP/$core.zip" -d "$TMP/x"
-              mv "$TMP/x/${core}_libretro_android.so" "app/src/main/jniLibs/$abi/lib${core}_libretro_android.so"
+          ls -l app/src/main/jniLibs/*/
+          for abi in arm64-v8a armeabi-v7a; do
+            for core in mame2010 fbneo; do
+              test -s "app/src/main/jniLibs/$abi/lib${core}_libretro_android.so" \
+                || { echo "::error::Core $core untuk $abi tidak ada"; exit 1; }
             done
           done
 
       - name: Build APK debug
-        working-directory: ${{ env.PROJ }}
         run: gradle assembleDebug --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
-          name: EmulatorAllInOne-debug-apk
-          path: ${{ env.PROJ }}/app/build/outputs/apk/debug/*.apk
+          name: app-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 1
