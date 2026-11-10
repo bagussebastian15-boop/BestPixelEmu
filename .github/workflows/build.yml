@@ -7,8 +7,26 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      # Proyek bisa ada di root repo, atau repo hanya berisi EmulatorAllInOne.zip (diekstrak ke _project).
+      - name: Siapkan proyek
+        run: |
+          set -euo pipefail
+          if [ ! -f settings.gradle.kts ]; then
+            Z="$(ls -1 *EmulatorAllInOne*.zip 2>/dev/null | head -n1 || true)"
+            [ -z "$Z" ] && Z="$(ls -1 *.zip 2>/dev/null | head -n1 || true)"
+            if [ -n "$Z" ]; then
+              echo "Mengekstrak $Z ke _project"
+              rm -rf _project && mkdir _project && unzip -q "$Z" -d _project
+            fi
+          fi
+          S="$(find . -name settings.gradle.kts -not -path '*/node_modules/*' | head -n1)"
+          [ -z "$S" ] && { echo "settings.gradle.kts tidak ditemukan"; exit 1; }
+          echo "PROJECT_DIR=$(dirname "$S")" >> "$GITHUB_ENV"
+          echo "Proyek: $(dirname "$S")"
 
       - uses: actions/setup-java@v4
         with:
@@ -19,73 +37,40 @@ jobs:
         with:
           gradle-version: 8.9
 
-      - name: Cari folder proyek Gradle
-        # Proyek bisa ada di root repo, di subfolder, atau masih berupa file .zip di repo (otomatis diekstrak)
-        run: |
-          f="$(find . -maxdepth 4 -name settings.gradle.kts -not -path './.git/*' | head -n 1)"
-          if [ -z "$f" ]; then
-            # Pilih zip proyek: utamakan yang bernama *mame2010*, kalau tidak ada pakai zip pertama di root repo
-            z="$(ls *mame2010*.zip 2>/dev/null | head -n 1 || true)"
-            [ -n "$z" ] || z="$(ls *.zip 2>/dev/null | head -n 1 || true)"
-            if [ -z "$z" ]; then
-              echo "::error::settings.gradle.kts dan file .zip proyek tidak ditemukan di repo."
-              find . -maxdepth 2 -not -path './.git*' | head -50
-              exit 1
-            fi
-            echo "Mengekstrak $z ke _project"
-            mkdir -p _project && unzip -oq "$z" -d _project
-            f="$(find _project -maxdepth 4 -name settings.gradle.kts | head -n 1)"
-            [ -n "$f" ] || { echo "::error::$z tidak berisi settings.gradle.kts"; exit 1; }
-          fi
-          dir="$(dirname "$f")"
-          echo "Folder proyek: $dir"
-          echo "PROJECT_DIR=$dir" >> "$GITHUB_ENV"
+      - name: Terima lisensi Android SDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
+      # Mengunduh SEMUA core libretro (build Android) dari buildbot resmi.
+      # Core wajib harus berhasil; core arcade tambahan opsional (dilewati bila tidak ada di buildbot).
       - name: Unduh core libretro
-        # Dibuat mandiri (tidak butuh scripts/fetch_cores.sh di repo)
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -euo pipefail
-          BASE="https://buildbot.libretro.com/nightly/android/latest"
-          CORES="mgba snes9x genesis_plus_gx mame2010 fbneo"
-          ABIS="arm64-v8a armeabi-v7a"   # tambahkan x86 x86_64 bila perlu
-          TMP="$(mktemp -d)"
-          for abi in $ABIS; do
-            mkdir -p "app/src/main/jniLibs/$abi"
-            for core in $CORES; do
-              target="app/src/main/jniLibs/$abi/lib${core}_libretro_android.so"
-              url="$BASE/$abi/${core}_libretro_android.so.zip"
-              echo "-> $url"
-              ok=0
-              for try in 1 2 3 4 5 6; do
-                if curl -fsSL --http1.1 --connect-timeout 20 --max-time 180 -A "Mozilla/5.0 fetch_cores" "$url" -o "$TMP/$core.zip"; then ok=1; break; fi
-                echo "   gagal (percobaan $try/6), ulangi..."; sleep $((try * 5))
-              done
-              [ "$ok" = 1 ] || { echo "::error::Gagal mengunduh $url"; exit 1; }
-              rm -rf "$TMP/x" && mkdir -p "$TMP/x"
-              unzip -oq "$TMP/$core.zip" -d "$TMP/x"
-              mv -f "$TMP/x/${core}_libretro_android.so" "$target"
-              sleep 1
-            done
-          done
+          REFRESH="fbneo mame2010 mame2003_plus mame2003 mame2000 mame2015 mame2016 fbalpha2012" bash scripts/fetch_cores.sh
 
-      - name: Pastikan core arcade (MAME 2010 + FBNeo) ada
+      - name: Laporan core yang ikut di APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          ls -l app/src/main/jniLibs/*/
-          for abi in arm64-v8a armeabi-v7a; do
-            for core in mame2010 fbneo; do
-              test -s "app/src/main/jniLibs/$abi/lib${core}_libretro_android.so" \
-                || { echo "::error::Core $core untuk $abi tidak ada"; exit 1; }
+          set -euo pipefail
+          {
+            echo "## Core libretro di APK"
+            for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+              echo "### $abi"
+              ls -1 "app/src/main/jniLibs/$abi" 2>/dev/null | sed 's/^lib//; s/_libretro_android.so$//; s/^/- /' || true
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          for c in mgba snes9x genesis_plus_gx mame2010 fbneo; do
+            for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+              [ -s "app/src/main/jniLibs/$abi/lib${c}_libretro_android.so" ] || { echo "Core wajib hilang: $abi/$c"; exit 1; }
             done
           done
 
       - name: Build APK debug
         working-directory: ${{ env.PROJECT_DIR }}
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
-          name: app-debug
+          name: EmulatorAllInOne-debug-apk
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
-          retention-days: 1
+          retention-days: 3
