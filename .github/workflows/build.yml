@@ -20,12 +20,31 @@ jobs:
           gradle-version: 8.9
 
       - name: Unduh core libretro
-        env:
-          # ABI yang disertakan di APK (hapus baris ini untuk semua ABI: armeabi-v7a arm64-v8a x86 x86_64)
-          ABIS: "arm64-v8a armeabi-v7a"
-          # Selalu unduh ulang core ini agar memakai build nightly terbaru
-          REFRESH: "fbneo mame2010"
-        run: bash scripts/fetch_cores.sh
+        # Dibuat mandiri (tidak butuh scripts/fetch_cores.sh di repo)
+        run: |
+          set -euo pipefail
+          BASE="https://buildbot.libretro.com/nightly/android/latest"
+          CORES="mgba snes9x genesis_plus_gx mame2010 fbneo"
+          ABIS="arm64-v8a armeabi-v7a"   # tambahkan x86 x86_64 bila perlu
+          TMP="$(mktemp -d)"
+          for abi in $ABIS; do
+            mkdir -p "app/src/main/jniLibs/$abi"
+            for core in $CORES; do
+              target="app/src/main/jniLibs/$abi/lib${core}_libretro_android.so"
+              url="$BASE/$abi/${core}_libretro_android.so.zip"
+              echo "-> $url"
+              ok=0
+              for try in 1 2 3 4 5 6; do
+                if curl -fsSL --http1.1 --connect-timeout 20 --max-time 180 -A "Mozilla/5.0 fetch_cores" "$url" -o "$TMP/$core.zip"; then ok=1; break; fi
+                echo "   gagal (percobaan $try/6), ulangi..."; sleep $((try * 5))
+              done
+              [ "$ok" = 1 ] || { echo "::error::Gagal mengunduh $url"; exit 1; }
+              rm -rf "$TMP/x" && mkdir -p "$TMP/x"
+              unzip -oq "$TMP/$core.zip" -d "$TMP/x"
+              mv -f "$TMP/x/${core}_libretro_android.so" "$target"
+              sleep 1
+            done
+          done
 
       - name: Pastikan core arcade (MAME 2010 + FBNeo) ada
         run: |
