@@ -20,13 +20,22 @@ jobs:
           gradle-version: 8.9
 
       - name: Cari folder proyek Gradle
-        # Proyek bisa ada di root repo atau di subfolder (mis. repo "BestPixelEmu" berisi folder proyek di dalamnya)
+        # Proyek bisa ada di root repo, di subfolder, atau masih berupa file .zip di repo (otomatis diekstrak)
         run: |
           f="$(find . -maxdepth 4 -name settings.gradle.kts -not -path './.git/*' | head -n 1)"
           if [ -z "$f" ]; then
-            echo "::error::settings.gradle.kts tidak ditemukan di repo. Upload isi proyek (app/, settings.gradle.kts, build.gradle.kts, gradle.properties)."
-            find . -maxdepth 2 -not -path './.git*' | head -50
-            exit 1
+            # Pilih zip proyek: utamakan yang bernama *mame2010*, kalau tidak ada pakai zip pertama di root repo
+            z="$(ls *mame2010*.zip 2>/dev/null | head -n 1 || true)"
+            [ -n "$z" ] || z="$(ls *.zip 2>/dev/null | head -n 1 || true)"
+            if [ -z "$z" ]; then
+              echo "::error::settings.gradle.kts dan file .zip proyek tidak ditemukan di repo."
+              find . -maxdepth 2 -not -path './.git*' | head -50
+              exit 1
+            fi
+            echo "Mengekstrak $z ke _project"
+            mkdir -p _project && unzip -oq "$z" -d _project
+            f="$(find _project -maxdepth 4 -name settings.gradle.kts | head -n 1)"
+            [ -n "$f" ] || { echo "::error::$z tidak berisi settings.gradle.kts"; exit 1; }
           fi
           dir="$(dirname "$f")"
           echo "Folder proyek: $dir"
